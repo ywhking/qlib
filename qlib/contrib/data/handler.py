@@ -155,3 +155,83 @@ class Alpha158(DataHandlerLP):
 class Alpha158vwap(Alpha158):
     def get_label_config(self):
         return ["Ref($vwap, -2)/Ref($vwap, -1) - 1"], ["LABEL0"]
+    
+class Alpha158Extended(Alpha158):
+    """
+    扩展版 Alpha158，增加换手率、成交额、流通股等自定义特征
+    保留原始 Alpha158 的 158 个特征，额外增加约 30+ 个自定义特征
+    """
+
+    def get_feature_config(self):
+        """
+        获取扩展特征配置
+        """
+        # 获取原始 Alpha158 的 158 个特征
+        base_fields, base_names = super().get_feature_config()
+
+        # 添加自定义特征
+        custom_fields, custom_names = self._get_custom_features()
+
+        # 合并
+        all_fields = base_fields + custom_fields
+        all_names = base_names + custom_names
+
+        print(f"\n特征统计:")
+        print(f"  - 原始 Alpha158: {len(base_names)} 个")
+        print(f"  - 自定义特征: {len(custom_names)} 个")
+        print(f"  - 总计: {len(all_names)} 个")
+
+        return all_fields, all_names
+
+    def _get_custom_features(self):
+        """
+        定义自定义特征
+        """
+        fields = []
+        names = []
+
+        # ========== 1. 换手率特征 (Turnover) - 优化 ==========
+        # 近3日换手率（减少内存占用）
+        for d in range(3):
+            if d == 0:
+                fields.append("$turnover")
+            else:
+                fields.append(f"Ref($turnover, {d})")
+            names.append(f"TURNOVER{d}")
+
+        # 换手率移动平均（只保留5日）
+        fields.append("Mean($turnover, 5)")
+        names.append("TURNOVER_MA5")
+
+        # 换手率变化率
+        fields.append("$turnover/Ref($turnover, 1)-1")
+        names.append("TURNOVER_CHG")
+
+        # ========== 2. 成交额特征 (Amount) - 简化 ==========
+        # 当日成交额
+        fields.append("$amount/($amount+1e-12)")
+        names.append("AMOUNT0")
+
+        # 成交额移动平均
+        fields.append("Mean($amount, 5)/($amount+1e-12)")
+        names.append("AMOUNT_MA5")
+
+        # 成交额变化率
+        fields.append("$amount/Ref($amount, 1)-1")
+        names.append("AMOUNT_CHG1")
+
+        # ========== 3. 流通股特征 (Outstanding Share) - 简化 ==========
+        fields.append("$outstanding_share/($outstanding_share+1e-12)")
+        names.append("OUTSTANDING0")
+
+        # ========== 4. 衍生特征 - 简化 ==========
+        # 成交额/成交量 = 成交均价 / 收盘价
+        fields.append("$amount/($volume+1e-12)/$close")
+        names.append("VWAP_CUSTOM")
+
+        # 换手率*成交量 (资金活跃度指标)
+        fields.append("$turnover*$volume/($volume+1e-12)")
+        names.append("TURNOVER_VOL_ACTIVE")
+
+        return fields, names
+
