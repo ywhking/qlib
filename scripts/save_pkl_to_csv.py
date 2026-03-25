@@ -15,7 +15,8 @@ def save_pkl_to_csv(pkl_path, csv_path):
     df = df.reset_index()
     df.columns = ["date", "symbol", "score"]
     
-    # 按日期删选出每日最高分的股票，保留前10只，其余删除
+    # 按日期删选出score > 0.2的前5只股票
+    df = df[df["score"] > 2]
     df = df.groupby("date").apply(lambda x: x.nlargest(5, "score")).reset_index(drop=True)
     
     # 5. 保存 CSV
