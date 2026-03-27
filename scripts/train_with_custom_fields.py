@@ -1,8 +1,12 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-使用自定义 fields（$volume, $amount, $turnover, $outstanding_share）的完整训练脚本
-基于 workflow_config_lightgbm_Alpha158_sina.yaml 的正确实现
+优化版：使用自定义 fields 训练 LightGBM 分类模型
+优化点：
+1. 标签改为未来5天收益率是否为正（降低噪声）
+2. 模型超参数：降低学习率、减少叶子数、增加正则化、类别平衡
+3. 特征中移除无意义的 $close/$close 项
+4. 添加类别权重平衡
 """
 
 import qlib
@@ -16,15 +20,18 @@ def get_custom_feature_config():
     """
     使用自定义 fields 创建特征配置
     包含：原始价格数据 + 自定义 fields（volume, amount, turnover, outstanding_share）
+    优化：移除 $close/$close（恒为1），避免冗余信息
     """
-    # 基础价格特征（类似 Alpha158 的价格部分）
     fields = []
     names = []
 
-    # 1. 基础价格特征（归一化）
-    for field in ["open", "high", "low", "close", "vwap"]:
-        fields.append(f"${field}/$close")  # 归一化到收盘价
+    # 1. 基础价格特征（归一化）- 去掉 $close/$close
+    for field in ["open", "high", "low", "vwap"]:   # 去掉 close
+        fields.append(f"${field}/$close")
         names.append(field.upper() + "0")
+    # 补充 close 本身也可以作为特征，但不用除以自身，这里直接使用 $close
+    fields.append("$close")
+    names.append("CLOSE0")
 
     # 2. 历史价格（前5天）
     for d in range(1, 5):
@@ -32,47 +39,36 @@ def get_custom_feature_config():
             fields.append(f"Ref(${field}, {d})/$close")
             names.append(field.upper() + str(d))
 
-    # 3. 【关键】自定义 Fields - Volume 相关
-    # 当日成交量归一化
+    # 3. Volume 相关
     fields.append("$volume/($volume+1e-12)")
     names.append("VOLUME0")
-
-    # 历史成交量（前5天）
     for d in range(1, 5):
         fields.append(f"Ref($volume, {d})/($volume+1e-12)")
         names.append(f"VOLUME{d}")
 
-    # 4. 【关键】自定义 Fields - Amount 成交额
+    # 4. Amount 成交额
     fields.append("$amount/($amount+1e-12)")
     names.append("AMOUNT0")
-
     for d in range(1, 5):
         fields.append(f"Ref($amount, {d})/($amount+1e-12)")
         names.append(f"AMOUNT{d}")
 
-    # 5. 【关键】自定义 Fields - Turnover 换手率 ⭐
-    fields.append("$turnover")  # 当日换手率
+    # 5. Turnover 换手率
+    fields.append("$turnover")
     names.append("TURNOVER0")
-
     for d in range(1, 5):
         fields.append(f"Ref($turnover, {d})")
         names.append(f"TURNOVER{d}")
-
-    # 换手率移动平均
     fields.append("Mean($turnover, 5)")
     names.append("TURNOVER_MA5")
-
     fields.append("Mean($turnover, 10)")
     names.append("TURNOVER_MA10")
-
-    # 换手率标准差（波动）
     fields.append("Std($turnover, 5)")
     names.append("TURNOVER_STD5")
 
-    # 6. 【关键】自定义 Fields - Outstanding Share 流通股
+    # 6. Outstanding Share 流通股
     fields.append("$outstanding_share/($outstanding_share+1e-12)")
     names.append("OUTSTANDING0")
-
     for d in range(1, 3):
         fields.append(f"Ref($outstanding_share, {d})/($outstanding_share+1e-12)")
         names.append(f"OUTSTANDING{d}")
@@ -81,16 +77,15 @@ def get_custom_feature_config():
     fields.append("$amount/($volume+1e-12)/$close")
     names.append("VWAP_CALC")
 
-    # 8. 衍生特征 - 换手率变化
+    # 8. 换手率变化
     fields.append("$turnover/Ref($turnover, 1)-1")
     names.append("TURNOVER_CHG")
 
-    # 9. 衍生特征 - 量价关系
+    # 9. 量价关系
     fields.append("$volume*($close-$open)/($close+1e-12)")
     names.append("VOL_PRICE_MOM")
 
-    # 10. Alpha158 风格的技术指标
-    # K线特征
+    # 10. K线特征
     fields += [
         "($close-$open)/$open",
         "($high-$low)/$open",
@@ -98,7 +93,7 @@ def get_custom_feature_config():
     ]
     names += ["KMID", "KLEN", "KMID2"]
 
-    # 滚动指标
+    # 11. 滚动指标
     for window in [5, 10, 20]:
         fields += [
             f"Mean($close, {window})/$close",
@@ -118,31 +113,29 @@ def get_custom_feature_config():
 
 def train_with_custom_fields():
     """
-    使用自定义 fields 训练模型
+    使用自定义 fields 训练 LightGBM 分类模型
     """
 
-    # ========== 1. 初始化 Qlib ==========
     print("=" * 70)
-    print("使用自定义 Fields 训练 LightGBM 模型")
+    print("优化版：使用自定义 Fields 训练 LightGBM 分类模型")
     print("Fields: $volume, $amount, $turnover, $outstanding_share")
+    print("预测目标：未来5日收益率是否为正")
     print("=" * 70)
 
-    qlib.init(provider_uri="~/.qlib/qlib_data/akshare_data", region="cn")
+    qlib.init(provider_uri="~/.qlib/qlib_data/sina_data", region="cn")
     print("\n✓ Qlib 初始化完成")
 
-    # ========== 2. 配置参数 ==========
+    # ========== 2. 配置特征与标签 ==========
     print("\n" + "=" * 70)
     print("2. 配置自定义特征")
     print("=" * 70)
 
-    # 获取自定义特征
     feature_fields, feature_names = get_custom_feature_config()
 
-    # 标签配置（预测次日收益率）
-    label_fields = ["Ref($close, -2)/Ref($close, -1) - 1"]
+    # 优化标签：未来5天收益率是否为正（使用 -6 表示未来第6天，-1 表示未来第1天）
+    label_fields = ["(Ref($close, -6)/Ref($close, -1) - 1) > 0"]
     label_names = ["LABEL0"]
 
-    # 构建 DataLoader 配置
     data_loader_config = {
         "class": "QlibDataLoader",
         "kwargs": {
@@ -154,46 +147,69 @@ def train_with_custom_fields():
         },
     }
 
-    # 数据处理器配置
+    # 数据处理器：横截面排名归一化 + 丢弃无效标签
     data_handler_config = {
-        "start_time": "2015-01-01",
+        "start_time": "2019-01-01",
         "end_time": "2025-12-31",
-        "fit_start_time": "2015-01-01",
-        "fit_end_time": "2023-12-31",
         "instruments": "all",
         "data_loader": data_loader_config,
+        "learn_processors": [
+            {
+                "class": "CSRankNorm",
+                "module_path": "qlib.data.dataset.processor",
+                "kwargs": {"fields_group": "feature"}
+            },
+            {
+                "class": "DropnaLabel",
+                "module_path": "qlib.data.dataset.processor"
+            },
+        ],
+        "infer_processors": [
+            {
+                "class": "CSRankNorm",
+                "module_path": "qlib.data.dataset.processor",
+                "kwargs": {"fields_group": "feature"}
+            },
+        ],
+        "shared_processors": [],
     }
 
-    # LightGBM 模型配置
+    # 优化后的模型配置
     model_config = {
         "class": "LGBModel",
         "module_path": "qlib.contrib.model.gbdt",
         "kwargs": {
-            "loss": "mse",
-            "colsample_bytree": 0.8879,
-            "learning_rate": 0.2,
-            "subsample": 0.8789,
-            "lambda_l1": 205.6999,
-            "lambda_l2": 580.9768,
-            "max_depth": 8,
-            "num_leaves": 210,
-            "num_threads": 20,
+            "objective": "binary",          # 二分类
+            "metric": "auc",                # 评估指标
+            "boosting_type": "gbdt",
+            "learning_rate": 0.05,          # 降低学习率
+            "num_leaves": 64,               # 减小叶子数，防止过拟合
+            "max_depth": 6,                 # 限制树深度
+            "min_child_samples": 20,        # 叶子节点最小样本数
+            "subsample": 0.8,               # 行采样
+            "colsample_bytree": 0.8,        # 列采样
+            "reg_alpha": 205.6999,          # L1 正则
+            "reg_lambda": 580.9768,         # L2 正则
+            "num_threads": 10,              # 并行线程数
+            "early_stopping_rounds": 50,    # 早停轮数
+            "verbose": -1,                  # 减少输出
+            "class_weight": "balanced",     # 自动平衡类别权重
         },
     }
 
-    # 数据集配置
+    # 数据集配置（仍使用单次划分，可根据需要改为 RollingDataset）
     dataset_config = {
         "class": "DatasetH",
         "module_path": "qlib.data.dataset",
         "kwargs": {
             "handler": {
-                "class": "DataHandlerLP",  # 使用基础 handler，不是 Alpha158
+                "class": "DataHandlerLP",
                 "module_path": "qlib.data.dataset.handler",
                 "kwargs": data_handler_config,
             },
             "segments": {
-                "train": ["2015-01-01", "2023-12-31"],
-                "valid": ["2024-01-01", "2024-12-31"],
+                "train": ["2019-01-01", "2023-12-20"],
+                "valid": ["2024-01-01", "2024-12-20"],
                 "test": ["2025-01-01", "2025-12-31"],
             },
         },
@@ -208,12 +224,16 @@ def train_with_custom_fields():
     dataset = init_instance_by_config(dataset_config)
     print("  ✓ 数据集初始化完成")
 
-    # 检查数据
     sample_data = dataset.prepare("train")
     print(f"\n  训练数据信息:")
     print(f"    - 样本数: {len(sample_data)}")
-    print(f"    - 特征数: {sample_data.shape[1] - 1}")  # 减去 label
+    print(f"    - 特征数: {sample_data.shape[1] - 1}")
     print(f"    - 特征名: {list(sample_data.columns[:5])} ...")
+
+    # 统计标签分布
+    if 'LABEL0' in sample_data.columns:
+        pos_ratio = sample_data['LABEL0'].mean()
+        print(f"    - 正样本比例: {pos_ratio:.4f}")
 
     print("  - 初始化模型...")
     model = init_instance_by_config(model_config)
@@ -230,11 +250,9 @@ def train_with_custom_fields():
     }
 
     with R.start(experiment_name="workflow_custom_fields"):
-        # 记录参数
         R.log_params(**flatten_dict(task_config))
         print("  ✓ 参数已记录到 MLflow")
 
-        # 训练
         print("  - 开始训练 LightGBM...")
         print("    (使用包含 volume/amount/turnover/outstanding_share 的特征集)")
         model.fit(dataset)
@@ -253,7 +271,7 @@ def train_with_custom_fields():
         print(f"    - Experiment: workflow_custom_fields")
         print(f"    - Recorder ID: {recorder.id}")
 
-        # ========== 6. 生成记录 ==========
+        # ========== 6. 生成预测和评估 ==========
         print("\n" + "=" * 70)
         print("6. 生成预测和评估")
         print("=" * 70)
@@ -299,7 +317,6 @@ def main():
         print(f"✗ 训练失败: {e}")
         print(f"{'=' * 70}")
         import traceback
-
         traceback.print_exc()
         return 1
 
