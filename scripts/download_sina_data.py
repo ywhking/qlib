@@ -3,6 +3,28 @@ import re
 import pandas as pd
 import akshare as ak
 
+column_mapping = {
+    '股票代码': 'symbol',
+    '股票简称': 'name',
+    '总股本': 'total_share',
+    '流通股': 'outstanding_share',
+    '总市值': 'total_mv',
+    '流通市值': 'float_mv',
+    '行业': 'industry',
+    '上市时间': 'list_date'
+}
+
+def parse_key_value(stock_df):
+    df_wide = stock_df.set_index('item')['value'].T
+    df_final = df_wide.to_frame().T
+    df_final.columns = [
+        'price', 'symbol', 'name', 'total_share', 'outstanding_share', 
+        'total_mv', 'float_mv', 'industry', 'list_date'
+    ]
+    df_final = df_final.reset_index(drop=True)
+    return df_final
+
+
 def get_stock_name(stock_code):
     """
     根据股票代码判断市场前缀 (sz/sh)。
@@ -22,6 +44,8 @@ def download_index_info(index_code,start_date, end_date, target_dir):
     """通过miniQMT客户端下载历史数据，并转化成qlib数据格式"""
     
     print(f"开始下载{index_code}指数数据...")
+    
+    stock_name = None
     
     try:
     
@@ -55,9 +79,10 @@ def download_index_info(index_code,start_date, end_date, target_dir):
         print(f"下载{stock_name}数据时发生错误: {e}")
         
 def download_stock_info(stock_code,start_date, end_date, target_dir):
-    """通过miniQMT客户端下载历史数据，并转化成qlib数据格式"""
+    """通过akshare sina接口下载历史数据，并转化成qlib数据格式"""
 
     stock_name = None
+
     try :
         stock_name = get_stock_name(stock_code)
     except ValueError as e:
@@ -66,7 +91,13 @@ def download_stock_info(stock_code,start_date, end_date, target_dir):
     print(f"开始下载{stock_name}数据...")
     
     try:
-    
+        # 获取股票基本信息，名称 总股本 流通股本 市值 上市时间 行业等
+        stock_info = ak.stock_individual_info_em(symbol=stock_code)
+        
+        stock_df = parse_key_value(stock_info)
+        
+        print(f"股票 {stock_name} 的基本信息下载完成: - {stock_df['name'].iloc[0]}")
+        
         # 获取原始数据，用于计算复权系数
         original_stock_df= ak.stock_zh_a_daily(symbol=stock_name, start_date=start_date, end_date=end_date, adjust="")
         
@@ -84,10 +115,13 @@ def download_stock_info(stock_code,start_date, end_date, target_dir):
         
         # 添加symbol列
         adjusted_stock_df['symbol'] = stock_name.upper()
+        
+        # 将adjusted_stock_df 和并到 stock_df 中，得到一个包含基本信息和历史数据的DataFrame
+        # stock_df = pd.merge(stock_df, adjusted_stock_df, on='symbol', how='inner')
+        stock_df = adjusted_stock_df
 
-    
-        # 将前复权数据保存成csv格式
-        adjusted_stock_df.to_csv(f"{target_dir}/{stock_name}.csv",index=False,encoding='utf-8-sig')
+        # 将stock_df保存成csv格式
+        stock_df.to_csv(f"{target_dir}/{stock_name}.csv",index=False,encoding='utf-8-sig')
         print(f"{stock_name} data has been downloaded and saved to {target_dir}/{stock_name}.csv")
         
         # 将原始数据保存成csv格式
@@ -97,7 +131,7 @@ def download_stock_info(stock_code,start_date, end_date, target_dir):
         print(f"下载{stock_name}数据时发生错误: {e}")
             
     
-def batch_download_stock_info(start_code,end_code, start_date, end_date, target_dir):
+def batch_download_stock_info(start_date, end_date, target_dir):
     """通过miniQMT客户端下载历史数据，并转化成qlib数据格式"""
 
     # 获取A股的成分股列表
@@ -106,9 +140,6 @@ def batch_download_stock_info(start_code,end_code, start_date, end_date, target_
     # 下载股票数据，将下载的数据转化成csv格式，并保存到target_dir
     downloaded_count = 0
     for stock_code in stock_list['code']:
-        # 比较股票代码，跳过小于start_code的股票
-        if stock_code < start_code or stock_code > end_code:
-            continue
         stock_name = None
         try :
             stock_name = get_stock_name(stock_code)
@@ -124,13 +155,11 @@ def batch_download_stock_info(start_code,end_code, start_date, end_date, target_
         
 if __name__ == "__main__":
     # 支持子命令 stock 和 index，分别用于下载股票数据和指数数据
-    # stock命令需要参数 start_code, end_code, start_date, end_date, target_dir
+    # stock命令需要参数 start_date, end_date, target_dir
     # index命令需要参数 index_code, start_date, end_date, target_dir
     parser = argparse.ArgumentParser(description="下载新浪数据并转化成qlib数据格式")
     subparsers = parser.add_subparsers(dest="command", help="子命令")
     stock_parser = subparsers.add_parser("stock", help="下载股票数据")
-    stock_parser.add_argument("--start_code", type=str, help="起始股票代码")
-    stock_parser.add_argument("--end_code", type=str, help="结束股票代码")
     stock_parser.add_argument("--start_date", type=str, help="起始日期，格式为YYYY-MM-DD")
     stock_parser.add_argument("--end_date", type=str, help="结束日期，格式为YYYY-MM-DD")
     stock_parser.add_argument("--target_dir", type=str, help="保存下载数据的目标目录")
@@ -148,23 +177,20 @@ if __name__ == "__main__":
         exit(1)
         
     if args.command == "stock":
+        print(f"命令: 开始下载股票数据 ......")
         # 检查参数数量，如果参数不足，显示usage
-        if not all([args.start_code, args.end_code, args.start_date, args.end_date, args.target_dir]):
+        if not all([args.start_date, args.end_date, args.target_dir]):
             parser.print_usage()
             exit(1)
 
-            start_code = args.start_code
-            end_code = args.end_code
-            start_date = args.start_date
-            end_date = args.end_date
-            target_dir = args.target_dir
-            
-            batch_download_stock_info(
-                start_code=start_code, 
-                end_code=end_code, 
-                start_date=start_date, 
-                end_date=end_date, 
-                target_dir=target_dir)
+        start_date = args.start_date
+        end_date = args.end_date
+        target_dir = args.target_dir
+        
+        batch_download_stock_info(
+            start_date=start_date, 
+            end_date=end_date, 
+            target_dir=target_dir)
    
     elif args.command == "index":
         # 检查参数数量，如果参数不足，显示usage

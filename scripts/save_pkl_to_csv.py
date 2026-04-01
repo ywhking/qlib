@@ -16,8 +16,8 @@ def save_pkl_to_csv(pkl_path, csv_path):
     df.columns = ["date", "symbol", "score"]
     
     # 按日期删选出score > 0.2的前5只股票
-    # df = df[df["score"] > 2]
-    df = df.groupby("date").apply(lambda x: x.nlargest(5, "score")).reset_index(drop=True)
+    df = df[df["score"] > 0.05]
+    # df = df.groupby("date").apply(lambda x: x.nlargest(5, "score")).reset_index(drop=True)
     
     # 5. 保存 CSV
     df.to_csv(csv_path, index=False)

@@ -1,7 +1,7 @@
 qlib_init:
-    provider_uri: "~/.qlib/qlib_data/akshare_data"
+    provider_uri: "~/.qlib/qlib_data/sina_data"
     region: cn
-market: &market all
+market: &market csi300
 benchmark: &benchmark SH000300
 data_handler_config: &data_handler_config
     start_time: 2015-01-01
@@ -65,7 +65,7 @@ task:
           kwargs: 
             ana_long_short: False
             ann_scaler: 252
-        # - class: PortAnaRecord
-        #   module_path: qlib.workflow.record_temp
-        #   kwargs: 
-        #     config: *port_analysis_config
+        - class: PortAnaRecord
+          module_path: qlib.workflow.record_temp
+          kwargs: 
+            config: *port_analysis_config
