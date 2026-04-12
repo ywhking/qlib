@@ -1,117 +1,113 @@
-import os
+import argparse
 import sys
 from pathlib import Path
+from typing import Optional
 
-import qlib
-from qlib.utils import init_instance_by_config
-from qlib.data import D
-from qlib.contrib.model.gbdt import LGBModel
-from qlib.workflow import R
-from qlib.workflow.record_temp import SignalRecord
 import pandas as pd
+import qlib
+from qlib.log import get_module_logger
+from qlib.utils import init_instance_by_config
+from qlib.workflow import R
+
+logger = get_module_logger("predict_stock_ror")
 
 
-def predict_stock_ror(experiment_name, recorder_id, end_date, mlflow_uri=None):
+def predict_stock_ror(
+    experiment_name: str,
+    recorder_id: str,
+    end_date: str,
+    mlflow_uri: Optional[str] = None,
+    provider_uri: Optional[str] = None,
+    start_time: str = "2020-01-01",
+    fit_start_time: str = "2020-01-01",
+    fit_end_time: str = "2024-12-31",
+    output_dir: str = ".",
+) -> pd.DataFrame:
     """
-    使用已训练的模型预测股票收益率
+    Use a trained model to predict stock returns.
 
     Parameters
     ----------
     experiment_name : str
-        MLflow experiment name/ID
+        MLflow experiment name/ID.
     recorder_id : str
-        MLflow recorder/run ID
+        MLflow recorder/run ID.
     end_date : str
-        预测日期 (格式: YYYY-MM-DD)
+        Prediction date (format: YYYY-MM-DD).
     mlflow_uri : str, optional
-        MLflow tracking URI, 默认为 None (自动检测)
+        MLflow tracking URI. Auto-detected if None.
+    provider_uri : str, optional
+        Qlib data provider URI. Defaults to ~/.qlib/qlib_data/akshare_data.
+    start_time : str
+        Start time for the prediction dataset handler.
+    fit_start_time : str
+        Fit start time for processor calibration.
+    fit_end_time : str
+        Fit end time for processor calibration.
+    output_dir : str
+        Directory to save prediction CSV files.
+
+    Returns
+    -------
+    pd.DataFrame
+        Prediction scores for all stocks.
     """
 
-    # 1. 初始化 Qlib
-    qlib.init(
-        provider_uri="C://Users//ywhki//.qlib//qlib_data//akshare_data", region="cn"
-    )
-    print(
-        f"✅ Qlib 初始化成功，数据路径: C://Users//ywhki//.qlib//qlib_data//akshare_data"
-    )
+    if provider_uri is None:
+        provider_uri = str(Path.home() / ".qlib" / "qlib_data" / "akshare_data")
+    qlib.init(provider_uri=provider_uri, region="cn")
+    logger.info(f"Qlib initialized, data path: {provider_uri}")
 
-    # 2. 设置 MLflow URI（关键步骤）
-    # 如果未提供，则使用脚本所在目录的 mlruns 文件夹
     if mlflow_uri is None:
-        # 默认使用项目根目录下的 mlruns
-        script_dir = Path(__file__).parent.parent  # scripts/../ = 项目根目录
+        script_dir = Path(__file__).parent.parent
         mlflow_path = script_dir / "mlruns"
         mlflow_uri = f"file:{mlflow_path.resolve()}"
 
-    print(f"设置 MLflow URI: {mlflow_uri}")
+    logger.info(f"MLflow URI: {mlflow_uri}")
     R.set_uri(mlflow_uri)
 
-    # 3. 验证实验是否存在
-    print(f"\n查找实验: {experiment_name}")
+    logger.info(f"Looking up experiment: {experiment_name}")
     try:
         experiments = R.list_experiments()
         available_exps = list(experiments.keys())
-        print(f"可用实验: {experiments}")
 
         if experiment_name not in available_exps:
-            print(f"\n⚠️ 警告: 实验 '{experiment_name}' 不在可用实验中!")
-            print(f"前10个可用实验: {available_exps[:10]}")
-
-            # 尝试查找匹配的实验（可能是数字ID）
             matching_exps = [e for e in available_exps if experiment_name in str(e)]
             if matching_exps:
-                print(f"\n匹配的实验: {matching_exps}")
+                logger.warning(f"Matching experiments: {matching_exps}")
+            raise ValueError(f"Experiment '{experiment_name}' not found. Available: {available_exps[:10]}")
 
-            raise ValueError(f"实验 '{experiment_name}' 不存在")
-        else:
-            print(f"✓ 找到实验: {experiment_name}")
+        logger.info(f"Found experiment: {experiment_name}")
 
-            # 列出该实验下的 recorders
-            exp = experiments[experiment_name]
-            recorders = exp.list_recorders()
-            print(f"  实验下的 recorders: {len(recorders)}")
+        exp = experiments[experiment_name]
+        recorders = exp.list_recorders()
+        logger.info(f"Recorders in experiment: {len(recorders)}")
 
-            if recorder_id not in recorders:
-                print(f"\n⚠️ 警告: Recorder '{recorder_id}' 不在该实验中!")
-                print(f"可用 recorders: {list(recorders.keys())[:10]}")
-                raise ValueError(f"Recorder '{recorder_id}' 不存在")
-            else:
-                print(f"✓ 找到 Recorder: {recorder_id}")
+        recorder_ids = set(recorders.keys())
+        if recorder_id not in recorder_ids:
+            raise ValueError(f"Recorder '{recorder_id}' not found. Available: {list(recorder_ids)[:10]}")
+
+        logger.info(f"Found recorder: {recorder_id}")
 
     except Exception as e:
-        print(f"\n❌ 错误: {e}")
-        print(f"当前 MLflow URI: {R.get_uri()}")
-        print("\n可能的解决方案:")
-        print("1. 检查 mlruns 文件夹路径是否正确")
-        print("2. 确认训练脚本和预测脚本使用相同的工作目录")
-        print("3. 手动指定 mlflow_uri 参数")
+        logger.error(f"Error accessing experiment/recorder: {e}")
+        logger.error(f"Current MLflow URI: {R.get_uri()}")
         raise
 
-    # 4. 加载已训练好的模型
-    print(f"\n加载模型...")
+    logger.info("Loading model...")
     try:
-        recorder = R.get_recorder(
-            recorder_id=recorder_id, experiment_name=experiment_name
-        )
+        recorder = R.get_recorder(recorder_id=recorder_id, experiment_name=experiment_name)
 
-        # 首先列出所有可用的 artifacts，查看模型保存的名称
-        print("\n查看可用的 artifacts:")
         artifacts = recorder.list_artifacts()
-        print(f"Artifacts: {artifacts}")
+        logger.info(f"Available artifacts: {artifacts}")
 
-        # 尝试加载模型
-        model = recorder.load_object("model")  # 使用 load_object 加载模型
-        print("✓ 模型加载成功")
+        model = recorder.load_object("model")
+        logger.info("Model loaded successfully")
     except Exception as e:
-        print(f"\n❌ 加载模型失败: {e}")
-        print("\n可能的原因:")
-        print("- 模型文件未正确保存")
-        print("- 模型保存时使用了不同的名称")
-        print("- 可以尝试 recorder.list_artifacts() 查看可用 artifacts")
+        logger.error(f"Failed to load model: {e}")
+        raise
 
-    # 5. 构建用于预测的数据集 (Dataset)
-    print(f"\n构建预测数据集...")
-    print(f"预测日期: {end_date}")
+    logger.info(f"Building prediction dataset for date: {end_date}")
 
     predict_dataset_config = {
         "class": "DatasetH",
@@ -121,74 +117,84 @@ def predict_stock_ror(experiment_name, recorder_id, end_date, mlflow_uri=None):
                 "class": "Alpha158",
                 "module_path": "qlib.contrib.data.handler",
                 "kwargs": {
-                    "start_time": "2025-01-01",
+                    "start_time": start_time,
                     "end_time": end_date,
-                    "fit_start_time": "2015-01-01",
-                    "fit_end_time": "2023-12-31",
+                    "fit_start_time": fit_start_time,
+                    "fit_end_time": fit_end_time,
                     "instruments": "all",
                 },
             },
-            "segments": {"prediction": [end_date, end_date]},
+            "segments": {"test": [end_date, end_date]},
         },
     }
 
     try:
         dataset = init_instance_by_config(predict_dataset_config)
-        print("✓ 数据集构建成功")
+        logger.info("Dataset built successfully")
     except Exception as e:
-        print(f"❌ 构建数据集失败: {e}")
-        print("\n可能的原因:")
-        print("- 数据路径不正确")
-        print("- 预测日期范围内没有数据")
-        print("- Alpha158 处理器配置错误")
+        logger.error(f"Failed to build dataset: {e}")
         raise
 
-    # 6. 执行预测
-    print(f"\n执行预测...")
+    logger.info("Running prediction...")
     try:
-        pred_scores = model.predict(dataset, segment="prediction")
-        print(f"✓ 预测完成，共 {len(pred_scores)} 只股票")
+        pred_scores = model.predict(dataset, segment="test")
+        logger.info(f"Prediction complete, {len(pred_scores)} stocks")
     except Exception as e:
-        print(f"❌ 预测失败: {e}")
+        logger.error(f"Prediction failed: {e}")
         raise
 
-    # 7. 处理结果
-    print(f"\n{'=' * 60}")
-    print(f"预测日期：{end_date} (基于 {end_date} 的数据)")
-    print(f"预测股票数量：{len(pred_scores)}")
-
-    # 确保 pred_scores 是 DataFrame
     if isinstance(pred_scores, pd.Series):
         pred_scores = pred_scores.to_frame(name="score")
 
-    # 重命名列为 'score'
     if pred_scores.shape[1] == 1:
         pred_scores.columns = ["score"]
 
-    # 保存结果
-    output_file = f"prediction_{end_date}.csv"
-    top10_stocks = pred_scores.sort_values(by="score", ascending=False).head(10)
-    top10_stocks.to_csv(output_file)
-    print(f"\n结果已保存到: {output_file}")
-    print(f"\nTop 10 预测收益率最高的股票:")
-    print(top10_stocks)
+    pred_scores = pred_scores.dropna(subset=["score"])
 
-    return
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    full_output = output_path / f"prediction_{end_date}_full.csv"
+    pred_scores.sort_values(by="score", ascending=False).to_csv(full_output, encoding="utf-8-sig")
+    logger.info(f"Full results saved to: {full_output}")
+
+    top10_stocks = pred_scores.sort_values(by="score", ascending=False).head(10)
+    top10_output = output_path / f"prediction_{end_date}_top10.csv"
+    top10_stocks.to_csv(top10_output, encoding="utf-8-sig")
+
+    logger.info(f"Prediction date: {end_date}, stocks predicted: {len(pred_scores)}")
+    logger.info(f"Top 10 stocks:\n{top10_stocks}")
+
+    return pred_scores
 
 
 def main():
-    # 配置信息
-    EXPERIMENT_NAME = "workflow"
-    RECORDER_ID = "ae459e4ae21d4fbbacaa1f57dc30ed51"  # 尝试第一个
-    END_DATE = "2025-12-31"
-    MLFLOW_URI = None  # 自动检测
+    parser = argparse.ArgumentParser(description="Predict stock returns using a trained Qlib model")
+    parser.add_argument("--experiment", default="workflow", help="MLflow experiment name/ID")
+    parser.add_argument("--recorder-id", required=True, help="MLflow recorder/run ID")
+    parser.add_argument("--end-date", required=True, help="Prediction date (YYYY-MM-DD)")
+    parser.add_argument("--mlflow-uri", default=None, help="MLflow tracking URI")
+    parser.add_argument("--provider-uri", default=None, help="Qlib data provider URI")
+    parser.add_argument("--start-time", default="2020-01-01", help="Dataset start time")
+    parser.add_argument("--fit-start-time", default="2020-01-01", help="Fit start time")
+    parser.add_argument("--fit-end-time", default="2024-12-31", help="Fit end time")
+    parser.add_argument("--output-dir", default=".", help="Output directory for CSV files")
+    args = parser.parse_args()
 
     try:
-        predict_stock_ror(EXPERIMENT_NAME, RECORDER_ID, END_DATE, MLFLOW_URI)
+        predict_stock_ror(
+            experiment_name=args.experiment,
+            recorder_id=args.recorder_id,
+            end_date=args.end_date,
+            mlflow_uri=args.mlflow_uri,
+            provider_uri=args.provider_uri,
+            start_time=args.start_time,
+            fit_start_time=args.fit_start_time,
+            fit_end_time=args.fit_end_time,
+            output_dir=args.output_dir,
+        )
     except Exception as e:
-        print(f"\n{'=' * 60}")
-        print(f"程序执行失败: {e}")
-        print(f"{'=' * 60}")
+        logger.error(f"Execution failed: {e}")
         sys.exit(1)
 
 

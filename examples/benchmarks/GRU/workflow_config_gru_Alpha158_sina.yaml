@@ -1,5 +1,5 @@
 qlib_init:
-    provider_uri: "~/.qlib/qlib_data/akshare_data"
+    provider_uri: "~/.qlib/qlib_data/tushare_data"
     region: cn
 market: &market all
 benchmark: &benchmark SH000300

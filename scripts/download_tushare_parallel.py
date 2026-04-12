@@ -171,14 +171,61 @@ def download_st_data(ts_pro,ts_code,start_date, end_date, target_dir):
     except Exception as e:
         print(f"❌ 获取 {ts_code} 的ST数据失败: {e}")
         
+        
+def download_money_data(ts_pro,ts_code,start_date, end_date, target_dir):
+    """下载资金流向数据"""
+    print(f"开始下载 {ts_code} 的资金流向数据...")
+    try:
+        df_money = ts_pro.moneyflow(ts_code=ts_code, start_date=start_date, end_date=end_date)
+        symbol = get_stock_name(ts_code)    
+        file_name = symbol + '.money.csv'
+        file_path = os.path.join(target_dir, file_name)
+        df_money.rename(columns={'ts_code': 'symbol', 'trade_date': 'date'}, inplace=True)
+        df_money['date'] = pd.to_datetime(df_money['date'], format='%Y%m%d').dt.strftime('%Y-%m-%d')
+        df_money['symbol'] = symbol
+        # 将df_money按日期排序
+        df_money.sort_values('date', inplace=True)
+        if os.path.exists(file_path):
+            # 加载现有数据，检查是否有重复日期
+            existing_df = pd.read_csv(file_path)
+            # 追加新数据，去重后保存
+            df_money = pd.concat([existing_df, df_money], ignore_index=True).drop_duplicates(subset=['date'])
+        df_money.to_csv(file_path, index=False, encoding='utf-8-sig')        
+        print(f"{symbol} ✅ 资金流向数据下载完成: {file_path} (共 {len(df_money)} 行)")
+    except Exception as e:
+        print(f"❌ 获取 {ts_code} 的资金流向数据失败: {e}")
+        
+def download_limit_data(ts_pro,ts_code,start_date, end_date, target_dir):
+    """下载涨跌停数据"""
+    print(f"开始下载 {ts_code} 的涨跌停数据...")
+    try:
+        df_limit = ts_pro.stk_limit(ts_code=ts_code, start_date=start_date, end_date=end_date)
+        symbol = get_stock_name(ts_code)    
+        file_name = symbol + '.limit.csv'
+        file_path = os.path.join(target_dir, file_name)
+        df_limit.rename(columns={'ts_code': 'symbol', 'trade_date': 'date'}, inplace=True)
+        df_limit['date'] = pd.to_datetime(df_limit['date'], format='%Y%m%d').dt.strftime('%Y-%m-%d')
+        df_limit['symbol'] = symbol
+        # 将df_limit按日期排序
+        df_limit.sort_values('date', inplace=True)
+        if os.path.exists(file_path):
+            # 加载现有数据，检查是否有重复日期
+            existing_df = pd.read_csv(file_path)
+            # 追加新数据，去重后保存
+            df_limit = pd.concat([existing_df, df_limit], ignore_index=True).drop_duplicates(subset=['date'])
+        df_limit.to_csv(file_path, index=False, encoding='utf-8-sig')        
+        print(f"{symbol} ✅ 涨跌停数据下载完成: {file_path} (共 {len(df_limit)} 行)")
+    except Exception as e:
+        print(f"❌ 获取 {ts_code} 的涨跌停数据失败: {e}")
+        
     
 def batch_download_stock_info(stock_list, start_date, end_date, target_dir,single_download_func):
     """通过tushare接口下载历史数据，并转化成qlib数据格式"""
     
     # 初始化 Tushare API
     MY_TOKEN = '0cde551845a233915fa6d31f169cc6a65f15f32007cc8b79371b6d8e'
-    ts.set_token(MY_TOKEN)
-    ts_pro = ts.pro_api()
+    # ts.set_token(MY_TOKEN)
+    ts_pro = ts.pro_api(token=MY_TOKEN)
     
     # 便利股票列表，下载数据
     for idx, row in stock_list.iterrows():
@@ -197,8 +244,12 @@ def download_stock_parallel(stock_list,start_date, end_date, target_dir):
         target=batch_download_stock_info, args=(stock_list,start_date, end_date, target_dir,download_daily_basic))
     p_st = multiprocessing.Process(
         target=batch_download_stock_info, args=(stock_list,start_date, end_date, target_dir,download_st_data))
+    p_money = multiprocessing.Process(
+        target=batch_download_stock_info, args=(stock_list,start_date, end_date, target_dir,download_money_data))
+    p_limit = multiprocessing.Process(
+        target=batch_download_stock_info, args=(stock_list,start_date, end_date, target_dir,download_limit_data))
     
-    p_list.extend([p_daily, p_factor, p_daily_basic, p_st])
+    p_list.extend([p_daily, p_factor, p_daily_basic, p_st, p_money, p_limit])
     
     for p in p_list:
         p.start()
@@ -214,20 +265,26 @@ def merge_stock_data(ts_code, list_date,download_dir,data_dir):
     daily_csv_file = os.path.join(download_dir, get_stock_name(ts_code) + '.daily.csv')
     factor_csv_file = os.path.join(download_dir, get_stock_name(ts_code) + '.factor.csv')
     daily_basic_csv_file = os.path.join(download_dir, get_stock_name(ts_code) + '.daily_basic.csv')
+    money_csv_file = os.path.join(download_dir, get_stock_name(ts_code) + '.money.csv')
+    limit_csv_file = os.path.join(download_dir, get_stock_name(ts_code) + '.limit.csv')
     st_csv_file = os.path.join(download_dir, get_stock_name(ts_code) + '.st.csv')
     if not os.path.exists(daily_csv_file) or \
        not os.path.exists(factor_csv_file) or \
        not os.path.exists(daily_basic_csv_file) or \
-       not os.path.exists(st_csv_file):
-        print(f"缺少 {ts_code} 的数据文件，无法合并。请确保 daily、factor、daily_basic 和 st 数据都已下载。")
+       not os.path.exists(st_csv_file) or \
+       not os.path.exists(money_csv_file) or \
+       not os.path.exists(limit_csv_file):
+        print(f"缺少 {ts_code} 的数据文件，无法合并。请确保 daily、factor、daily_basic、st、money 和 limit 数据都已下载。")
         return
     
     # 读取数据
     df_daily = pd.read_csv(daily_csv_file)
     df_factor = pd.read_csv(factor_csv_file)    
     df_basic = pd.read_csv(daily_basic_csv_file)
+    df_money = pd.read_csv(money_csv_file)
+    df_limit = pd.read_csv(limit_csv_file)
     df_st = pd.read_csv(st_csv_file)
-    
+        
     # 检查数据长度是否一致
     if len(df_daily) != len(df_basic) or len(df_daily) > len(df_factor):  
         print(f"{ts_code} 的数据长度不匹配，无法合并。")
@@ -237,18 +294,24 @@ def merge_stock_data(ts_code, list_date,download_dir,data_dir):
     print(f"正在合并 {ts_code} 的数据...")
     df = pd.merge(df_daily, df_basic, on=['symbol', 'date'], how='inner')
     df = pd.merge(df, df_factor, on=['symbol', 'date'], how='inner')
+    df = pd.merge(df, df_money, on=['symbol', 'date'], how='inner') 
+    df = pd.merge(df, df_limit, on=['symbol', 'date'], how='inner')
     df = pd.merge(df, df_st, on=['symbol', 'date'], how='left')  # ST数据可能不完整，使用左连接保留所有行情数据
+    
     
     # 计算前复权因子
     base_factor = df_factor['factor'].iloc[-1] # 以最后一个交易日的复权因子为基准
     # 计算前复权数值，并保留两位小数
     df['factor'] = (df['factor'] / base_factor).round(2)
-    # 计算前复权价格和调整成交量
+    # 计算前复权交易价格和成交量
     df['open'] = df['open'] * df['factor']
     df['high'] = df['high'] * df['factor']
     df['low'] = df['low'] * df['factor']
     df['close'] = df['close'] * df['factor']
     df['volume'] = df['volume'] / df['factor']
+    # 计算前复权的涨跌停价格
+    df['up_limit'] = df['up_limit'] * df['factor']
+    df['down_limit'] = df['down_limit'] * df['factor']
     
     # 判断是否是次新股数据（上市不足一年的股票）
     condition = pd.to_datetime(df['date'], format='%Y-%m-%d', errors='coerce') < \
@@ -263,7 +326,8 @@ def merge_stock_data(ts_code, list_date,download_dir,data_dir):
     # 按日期排序
     df.sort_values('date', inplace=True)
     # 选择需要保存的列
-    df = df[['symbol', 'date', 'open', 'high', 'low', 'close', 'volume', 'factor']]
+    # df = df[['symbol', 'date', 'open', 'high', 'low', 'close', 'volume', 'factor']]
+    df.drop(columns=['name','type','type_name'], inplace=True)
     csv_path = os.path.join(data_dir, get_stock_name(ts_code) + '.csv')
 
     # 保存，utf-8-sig 编码防止 Excel 打开中文乱码
@@ -280,37 +344,12 @@ def merge_csv_files(stock_list,download_dir,data_dir):
         
     print("🎉 数据合并完毕！")
     
-    
-if __name__ == "__main__":
-    # 支持子命令 stock 和 index，分别用于下载股票数据和指数数据
-    # stock命令需要参数 start_date, end_date, target_dir
-    # index命令需要参数 index_code, start_date, end_date, target_dir
-    parser = argparse.ArgumentParser(description="下载新浪数据并转化成qlib数据格式")
-    parser.add_argument("--start_date", type=str, help="起始日期，格式为YYYY-MM-DD")
-    parser.add_argument("--end_date", type=str, help="结束日期，格式为YYYY-MM-DD")
-    parser.add_argument("--download_dir", type=str, help="保存下载数据的目标目录")
-    parser.add_argument("--data_dir", type=str, help="保存合并数据的目标目录")
-    
-    # 如果输入参数不对，提示usage
-    args = parser.parse_args()
-    if not all([args.start_date, args.end_date, args.download_dir, args.data_dir]):
-        parser.print_usage()
-        exit(1)
-    
-    # 检查参数数量，如果参数不足，显示usage
-    if not all([args.start_date, args.end_date, args.download_dir]):
-        parser.print_usage()
-        exit(1)
-
-    start_date = args.start_date
-    end_date = args.end_date
-    download_dir = args.download_dir
-    data_dir = args.data_dir
-    
+def download_stock_list():
+    """下载股票列表数据"""
     # 请在此处填入你的 Tushare Token
     MY_TOKEN = '0cde551845a233915fa6d31f169cc6a65f15f32007cc8b79371b6d8e'
-    ts.set_token(MY_TOKEN)
-    ts_pro = ts.pro_api()
+    # ts.set_token(MY_TOKEN)
+    ts_pro = ts.pro_api(token=MY_TOKEN)
 
     # ================= 2. 获取股票池 =================
     print(f"正在获取股票基础列表...")
@@ -320,15 +359,62 @@ if __name__ == "__main__":
     # 筛选沪深 A 股
     stock_list = stock_list[stock_list['ts_code'].str.endswith('.SH') | stock_list['ts_code'].str.endswith('.SZ')]
     stock_list = stock_list.reset_index(drop=True)
+    return stock_list
     
-    # print(f"开始下载股票数据 ......")
-    # download_stock_parallel(stock_list,start_date, end_date, target_dir)
-    # print("所有下载任务已完成。")
     
-    # 合并数据
-    print(f"开始合并股票数据 ......")
-    merge_csv_files(stock_list, download_dir, data_dir)
-    print("所有数据合并任务已完成。")
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="下载新浪数据并转化成qlib数据格式")
+    # 添加子命令 download
+    subparsers = parser.add_subparsers(dest="command")
+    download_parser = subparsers.add_parser("download", help="下载股票数据")
+    download_parser.add_argument("--start_date", type=str, help="起始日期，格式为YYYY-MM-DD")
+    download_parser.add_argument("--end_date", type=str, help="结束日期，格式为YYYY-MM-DD")
+    download_parser.add_argument("--download_dir", type=str, help="保存下载数据的目标目录")
+    
+    # 添加子命令 merge
+    merge_parser = subparsers.add_parser("merge", help="合并下载的股票数据")
+    merge_parser.add_argument("--download_dir", type=str, help="保存下载数据的目标目录")
+    merge_parser.add_argument("--data_dir", type=str, help="保存合并数据的目标目录")
+    
+    args = parser.parse_args()
+    if args.command == "download":
+        if not all([args.start_date, args.end_date, args.download_dir]):
+            download_parser.print_usage()
+            exit(1)
+        start_date = args.start_date
+        end_date = args.end_date
+        download_dir = args.download_dir
+        
+        # 创建下载目录（如果不存在）
+        os.makedirs(download_dir, exist_ok=True)
+        
+        # 获取股票列表
+        stock_list = download_stock_list()
+    
+        print(f"开始下载股票数据 ......")
+        download_stock_parallel(stock_list,start_date, end_date, download_dir)
+        print("所有下载任务已完成。")
+    elif args.command == "merge":
+        if not all([args.download_dir, args.data_dir]):
+            merge_parser.print_usage()
+            exit(1)
+        download_dir = args.download_dir
+        data_dir = args.data_dir
+        
+        # 创建数据目录（如果不存在）
+        os.makedirs(data_dir, exist_ok=True)
+        
+        # 获取股票列表
+        stock_list = download_stock_list()
+    
+        # 合并数据
+        print(f"开始合并股票数据 ......")
+        merge_csv_files(stock_list, download_dir, data_dir)
+        print("所有数据合并任务已完成。")
+    else:
+        parser.print_usage()
+        exit(1)
+    
     
     
 

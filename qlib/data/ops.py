@@ -23,8 +23,12 @@ except ImportError:
     )
     raise
 except ValueError:
-    print("!!!!!!!! A error occurs when importing operators implemented based on Cython.!!!!!!!!")
-    print("!!!!!!!! They will be disabled. Please Upgrade your numpy to enable them     !!!!!!!!")
+    print(
+        "!!!!!!!! A error occurs when importing operators implemented based on Cython.!!!!!!!!"
+    )
+    print(
+        "!!!!!!!! They will be disabled. Please Upgrade your numpy to enable them     !!!!!!!!"
+    )
     # We catch this error because some platform can't upgrade there package (e.g. Kaggle)
     # https://www.kaggle.com/general/293387
     # https://www.kaggle.com/product-feedback/98562
@@ -203,7 +207,9 @@ class Mask(NpElemOperator):
         self.instrument = instrument
 
     def __str__(self):
-        return "{}({},{})".format(type(self).__name__, self.feature, self.instrument.lower())
+        return "{}({},{})".format(
+            type(self).__name__, self.feature, self.instrument.lower()
+        )
 
     def _load_internal(self, instrument, start_index, end_index, *args):
         return self.feature.load(self.instrument, start_index, end_index, *args)
@@ -249,7 +255,9 @@ class PairOperator(ExpressionOps):
         self.feature_right = feature_right
 
     def __str__(self):
-        return "{}({},{})".format(type(self).__name__, self.feature_left, self.feature_right)
+        return "{}({},{})".format(
+            type(self).__name__, self.feature_left, self.feature_right
+        )
 
     def get_longest_back_rolling(self):
         if isinstance(self.feature_left, (Expression,)):
@@ -300,19 +308,32 @@ class NpPairOperator(PairOperator):
 
     def _load_internal(self, instrument, start_index, end_index, *args):
         assert any(
-            [isinstance(self.feature_left, (Expression,)), self.feature_right, Expression]
+            [
+                isinstance(self.feature_left, (Expression,)),
+                self.feature_right,
+                Expression,
+            ]
         ), "at least one of two inputs is Expression instance"
         if isinstance(self.feature_left, (Expression,)):
-            series_left = self.feature_left.load(instrument, start_index, end_index, *args)
+            series_left = self.feature_left.load(
+                instrument, start_index, end_index, *args
+            )
         else:
-            series_left = self.feature_left  # numeric value
+            series_left = self.feature_left
         if isinstance(self.feature_right, (Expression,)):
-            series_right = self.feature_right.load(instrument, start_index, end_index, *args)
+            series_right = self.feature_right.load(
+                instrument, start_index, end_index, *args
+            )
         else:
             series_right = self.feature_right
         check_length = isinstance(series_left, (np.ndarray, pd.Series)) and isinstance(
             series_right, (np.ndarray, pd.Series)
         )
+        if check_length and len(series_left) != len(series_right):
+            if len(series_left) == 0 and len(series_right) > 0:
+                return pd.Series(np.nan, index=series_right.index, dtype=np.float32)
+            elif len(series_right) == 0 and len(series_left) > 0:
+                return pd.Series(np.nan, index=series_left.index, dtype=np.float32)
         if check_length:
             warning_info = (
                 f"Loading {instrument}: {str(self)}; np.{self.func}(series_left, series_right), "
@@ -655,19 +676,27 @@ class If(ExpressionOps):
         self.feature_right = feature_right
 
     def __str__(self):
-        return "If({},{},{})".format(self.condition, self.feature_left, self.feature_right)
+        return "If({},{},{})".format(
+            self.condition, self.feature_left, self.feature_right
+        )
 
     def _load_internal(self, instrument, start_index, end_index, *args):
         series_cond = self.condition.load(instrument, start_index, end_index, *args)
         if isinstance(self.feature_left, (Expression,)):
-            series_left = self.feature_left.load(instrument, start_index, end_index, *args)
+            series_left = self.feature_left.load(
+                instrument, start_index, end_index, *args
+            )
         else:
             series_left = self.feature_left
         if isinstance(self.feature_right, (Expression,)):
-            series_right = self.feature_right.load(instrument, start_index, end_index, *args)
+            series_right = self.feature_right.load(
+                instrument, start_index, end_index, *args
+            )
         else:
             series_right = self.feature_right
-        series = pd.Series(np.where(series_cond, series_left, series_right), index=series_cond.index)
+        series = pd.Series(
+            np.where(series_cond, series_left, series_right), index=series_cond.index
+        )
         return series
 
     def get_longest_back_rolling(self):
@@ -765,7 +794,9 @@ class Rolling(ExpressionOps):
         if self.N == 0:
             # FIXME: How to make this accurate and efficiently? Or  should we
             # remove such support for N == 0?
-            get_module_logger(self.__class__.__name__).warning("The Rolling(ATTR, 0) will not be accurately calculated")
+            get_module_logger(self.__class__.__name__).warning(
+                "The Rolling(ATTR, 0) will not be accurately calculated"
+            )
             return self.feature.get_extended_window_size()
         elif 0 < self.N < 1:
             lft_etd, rght_etd = self.feature.get_extended_window_size()
@@ -815,7 +846,9 @@ class Ref(Rolling):
 
     def get_extended_window_size(self):
         if self.N == 0:
-            get_module_logger(self.__class__.__name__).warning("The Ref(ATTR, 0) will not be accurately calculated")
+            get_module_logger(self.__class__.__name__).warning(
+                "The Ref(ATTR, 0) will not be accurately calculated"
+            )
             return self.feature.get_extended_window_size()
         else:
             lft_etd, rght_etd = self.feature.get_extended_window_size()
@@ -922,7 +955,9 @@ class Skew(Rolling):
 
     def __init__(self, feature, N):
         if N != 0 and N < 3:
-            raise ValueError("The rolling window size of Skewness operation should >= 3")
+            raise ValueError(
+                "The rolling window size of Skewness operation should >= 3"
+            )
         super(Skew, self).__init__(feature, N, "skew")
 
 
@@ -944,7 +979,9 @@ class Kurt(Rolling):
 
     def __init__(self, feature, N):
         if N != 0 and N < 4:
-            raise ValueError("The rolling window size of Kurtosis operation should >= 5")
+            raise ValueError(
+                "The rolling window size of Kurtosis operation should >= 5"
+            )
         super(Kurt, self).__init__(feature, N, "kurt")
 
 
@@ -990,9 +1027,13 @@ class IdxMax(Rolling):
     def _load_internal(self, instrument, start_index, end_index, *args):
         series = self.feature.load(instrument, start_index, end_index, *args)
         if self.N == 0:
-            series = series.expanding(min_periods=1).apply(lambda x: x.argmax() + 1, raw=True)
+            series = series.expanding(min_periods=1).apply(
+                lambda x: x.argmax() + 1, raw=True
+            )
         else:
-            series = series.rolling(self.N, min_periods=1).apply(lambda x: x.argmax() + 1, raw=True)
+            series = series.rolling(self.N, min_periods=1).apply(
+                lambda x: x.argmax() + 1, raw=True
+            )
         return series
 
 
@@ -1038,9 +1079,13 @@ class IdxMin(Rolling):
     def _load_internal(self, instrument, start_index, end_index, *args):
         series = self.feature.load(instrument, start_index, end_index, *args)
         if self.N == 0:
-            series = series.expanding(min_periods=1).apply(lambda x: x.argmin() + 1, raw=True)
+            series = series.expanding(min_periods=1).apply(
+                lambda x: x.argmin() + 1, raw=True
+            )
         else:
-            series = series.rolling(self.N, min_periods=1).apply(lambda x: x.argmin() + 1, raw=True)
+            series = series.rolling(self.N, min_periods=1).apply(
+                lambda x: x.argmin() + 1, raw=True
+            )
         return series
 
 
@@ -1065,7 +1110,9 @@ class Quantile(Rolling):
         self.qscore = qscore
 
     def __str__(self):
-        return "{}({},{},{})".format(type(self).__name__, self.feature, self.N, self.qscore)
+        return "{}({},{},{})".format(
+            type(self).__name__, self.feature, self.N, self.qscore
+        )
 
     def _load_internal(self, instrument, start_index, end_index, *args):
         series = self.feature.load(instrument, start_index, end_index, *args)
@@ -1153,7 +1200,11 @@ class Rank(Rolling):
     def _load_internal(self, instrument, start_index, end_index, *args):
         series = self.feature.load(instrument, start_index, end_index, *args)
 
-        rolling_or_expending = series.expanding(min_periods=1) if self.N == 0 else series.rolling(self.N, min_periods=1)
+        rolling_or_expending = (
+            series.expanding(min_periods=1)
+            if self.N == 0
+            else series.rolling(self.N, min_periods=1)
+        )
         if hasattr(rolling_or_expending, "rank"):
             return rolling_or_expending.rank(pct=True)
 
@@ -1278,8 +1329,12 @@ class Rsquare(Rolling):
         if self.N == 0:
             series = pd.Series(expanding_rsquare(_series.values), index=_series.index)
         else:
-            series = pd.Series(rolling_rsquare(_series.values, self.N), index=_series.index)
-            series.loc[np.isclose(_series.rolling(self.N, min_periods=1).std(), 0, atol=2e-05)] = np.nan
+            series = pd.Series(
+                rolling_rsquare(_series.values, self.N), index=_series.index
+            )
+            series.loc[
+                np.isclose(_series.rolling(self.N, min_periods=1).std(), 0, atol=2e-05)
+            ] = np.nan
         return series
 
 
@@ -1342,7 +1397,9 @@ class WMA(Rolling):
         if self.N == 0:
             series = series.expanding(min_periods=1).apply(weighted_mean, raw=True)
         else:
-            series = series.rolling(self.N, min_periods=1).apply(weighted_mean, raw=True)
+            series = series.rolling(self.N, min_periods=1).apply(
+                weighted_mean, raw=True
+            )
         return series
 
 
@@ -1410,7 +1467,9 @@ class PairRolling(ExpressionOps):
         self.func = func
 
     def __str__(self):
-        return "{}({},{},{})".format(type(self).__name__, self.feature_left, self.feature_right, self.N)
+        return "{}({},{},{})".format(
+            type(self).__name__, self.feature_left, self.feature_right, self.N
+        )
 
     def _load_internal(self, instrument, start_index, end_index, *args):
         assert any(
@@ -1418,18 +1477,35 @@ class PairRolling(ExpressionOps):
         ), "at least one of two inputs is Expression instance"
 
         if isinstance(self.feature_left, Expression):
-            series_left = self.feature_left.load(instrument, start_index, end_index, *args)
+            series_left = self.feature_left.load(
+                instrument, start_index, end_index, *args
+            )
         else:
-            series_left = self.feature_left  # numeric value
+            series_left = self.feature_left
         if isinstance(self.feature_right, Expression):
-            series_right = self.feature_right.load(instrument, start_index, end_index, *args)
+            series_right = self.feature_right.load(
+                instrument, start_index, end_index, *args
+            )
         else:
             series_right = self.feature_right
 
+        if isinstance(series_left, (np.ndarray, pd.Series)) and isinstance(
+            series_right, (np.ndarray, pd.Series)
+        ):
+            if len(series_left) != len(series_right):
+                if len(series_left) == 0 and len(series_right) > 0:
+                    return pd.Series(np.nan, index=series_right.index, dtype=np.float32)
+                elif len(series_right) == 0 and len(series_left) > 0:
+                    return pd.Series(np.nan, index=series_left.index, dtype=np.float32)
+
         if self.N == 0:
-            series = getattr(series_left.expanding(min_periods=1), self.func)(series_right)
+            series = getattr(series_left.expanding(min_periods=1), self.func)(
+                series_right
+            )
         else:
-            series = getattr(series_left.rolling(self.N, min_periods=1), self.func)(series_right)
+            series = getattr(series_left.rolling(self.N, min_periods=1), self.func)(
+                series_right
+            )
         return series
 
     def get_longest_back_rolling(self):
@@ -1486,14 +1562,25 @@ class Corr(PairRolling):
         super(Corr, self).__init__(feature_left, feature_right, N, "corr")
 
     def _load_internal(self, instrument, start_index, end_index, *args):
-        res: pd.Series = super(Corr, self)._load_internal(instrument, start_index, end_index, *args)
+        res: pd.Series = super(Corr, self)._load_internal(
+            instrument, start_index, end_index, *args
+        )
 
-        # NOTE: Load uses MemCache, so calling load again will not cause performance degradation
         series_left = self.feature_left.load(instrument, start_index, end_index, *args)
-        series_right = self.feature_right.load(instrument, start_index, end_index, *args)
+        series_right = self.feature_right.load(
+            instrument, start_index, end_index, *args
+        )
+        if (
+            isinstance(series_left, (np.ndarray, pd.Series))
+            and isinstance(series_right, (np.ndarray, pd.Series))
+            and len(series_left) != len(series_right)
+        ):
+            return res
         res.loc[
             np.isclose(series_left.rolling(self.N, min_periods=1).std(), 0, atol=2e-05)
-            | np.isclose(series_right.rolling(self.N, min_periods=1).std(), 0, atol=2e-05)
+            | np.isclose(
+                series_right.rolling(self.N, min_periods=1).std(), 0, atol=2e-05
+            )
         ] = np.nan
         return res
 
@@ -1650,11 +1737,17 @@ class OpsWrapper:
                 _ops_class = _operator
 
             if not issubclass(_ops_class, (Expression,)):
-                raise TypeError("operator must be subclass of ExpressionOps, not {}".format(_ops_class))
+                raise TypeError(
+                    "operator must be subclass of ExpressionOps, not {}".format(
+                        _ops_class
+                    )
+                )
 
             if _ops_class.__name__ in self._ops:
                 get_module_logger(self.__class__.__name__).warning(
-                    "The custom operator [{}] will override the qlib default definition".format(_ops_class.__name__)
+                    "The custom operator [{}] will override the qlib default definition".format(
+                        _ops_class.__name__
+                    )
                 )
             self._ops[_ops_class.__name__] = _ops_class
 
